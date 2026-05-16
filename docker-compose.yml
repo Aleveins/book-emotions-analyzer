@@ -1,0 +1,157 @@
+services:
+  postgres-users:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: user_storage
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata-users:/var/lib/postgresql/data
+      - ./migrations/user_storage/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d user_storage"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  postgres-texts:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: text_storage
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata-texts:/var/lib/postgresql/data
+      - ./migrations/text_storage/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d text_storage"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  nats:
+    image: nats:2-alpine
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["--js", "-m", "8222"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  api-gateway:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./services/api-gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend:/usr/share/nginx/html:ro
+    depends_on:
+      user-storage:
+        condition: service_started
+      job-processor:
+        condition: service_started
+
+  user-storage:
+    build:
+      context: .
+      dockerfile: services/user-storage/Dockerfile
+    environment:
+      DB_HOST: postgres-users
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: user_storage
+      JWT_SECRET: super-secret-key-change-in-production
+      SERVER_PORT: "8081"
+    depends_on:
+      postgres-users:
+        condition: service_healthy
+
+  text-storage:
+    build:
+      context: .
+      dockerfile: services/text-storage/Dockerfile
+    environment:
+      DB_HOST: postgres-texts
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: text_storage
+      GRPC_PORT: "50051"
+    depends_on:
+      postgres-texts:
+        condition: service_healthy
+
+  job-processor:
+    build:
+      context: .
+      dockerfile: services/job-processor/Dockerfile
+    environment:
+      SERVER_PORT: "8082"
+      REDIS_ADDR: redis:6379
+      NATS_URL: nats://nats:4222
+      TEXT_STORAGE_ADDR: text-storage:50051
+      JWT_SECRET: super-secret-key-change-in-production
+      OLLAMA_URL: "http://host.docker.internal:11434"
+      LLM_PROVIDER: "ollama"
+      LLM_MODEL: "qwen2.5:7b"
+      LLM_STATUS_TIMEOUT_SECONDS: "2"
+    depends_on:
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      text-storage:
+        condition: service_started
+
+  book-analyzer:
+    build:
+      context: .
+      dockerfile: services/book-analyzer/Dockerfile
+    environment:
+      NATS_URL: nats://nats:4222
+      REDIS_ADDR: redis:6379
+      TEXT_STORAGE_ADDR: text-storage:50051
+      MODEL_NAME_OR_PATH: SamLowe/roberta-base-go_emotions
+      LOCAL_FILES_ONLY: "false"
+      JOB_TIMEOUT_SECONDS: "14400"
+      # Опциональный LLM-анализ сцен через Ollama
+      OLLAMA_URL: "http://host.docker.internal:11434"
+      LLM_PROVIDER: "ollama"
+      LLM_MODEL: "qwen2.5:7b"
+      LLM_TIMEOUT_SECONDS: "60"
+    volumes:
+      - hf-cache:/cache/huggingface
+    depends_on:
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      text-storage:
+        condition: service_started
+
+volumes:
+  pgdata-users:
+  pgdata-texts:
+  redis-data:
+  hf-cache:
