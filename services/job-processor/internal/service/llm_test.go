@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestLLMStatusAvailableWhenOllamaModelExists(t *testing.T) {
@@ -26,9 +28,7 @@ func TestLLMStatusAvailableWhenOllamaModelExists(t *testing.T) {
 	service := NewLLMStatusService("ollama", "qwen2.5:7b", server.URL, time.Second)
 	status := service.Status(context.Background())
 
-	if !status.Available {
-		t.Fatalf("expected model to be available, got reason: %s", status.Reason)
-	}
+	assert.True(t, status.Available, "reason: %s", status.Reason)
 }
 
 func TestLLMStatusUnavailableWhenOllamaModelIsMissing(t *testing.T) {
@@ -41,12 +41,8 @@ func TestLLMStatusUnavailableWhenOllamaModelIsMissing(t *testing.T) {
 	service := NewLLMStatusService("ollama", "qwen2.5:7b", server.URL, time.Second)
 	status := service.Status(context.Background())
 
-	if status.Available {
-		t.Fatal("expected model to be unavailable")
-	}
-	if status.Reason == "" {
-		t.Fatal("expected unavailable status to include a reason")
-	}
+	assert.False(t, status.Available)
+	assert.NotEmpty(t, status.Reason)
 }
 
 func TestLLMStatusUnavailableWhenOllamaChatCheckFails(t *testing.T) {
@@ -66,10 +62,6 @@ func TestLLMStatusUnavailableWhenOllamaChatCheckFails(t *testing.T) {
 	service := NewLLMStatusService("ollama", "qwen2.5:7b", server.URL, time.Second)
 	status := service.Status(context.Background())
 
-	if status.Available {
-		t.Fatal("expected model to be unavailable")
-	}
-	if status.Reason == "" {
-		t.Fatal("expected unavailable status to include a reason")
-	}
+	assert.False(t, status.Available)
+	assert.NotEmpty(t, status.Reason)
 }
